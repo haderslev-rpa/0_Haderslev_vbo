@@ -25,9 +25,9 @@ def update_item_data(
     --------
     update_item_data(
         data,
+        state="Brev sendt",
         status="Completed",
         status_code="Behandlet færdig",
-        state="Completed",
         defer="2026-05-20T10:00:00Z"
     )
     """
