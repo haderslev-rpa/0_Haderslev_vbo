@@ -1,5 +1,5 @@
 from datetime import datetime
-
+from zoneinfo import ZoneInfo
 
 def update_item_data(
     data_json,
@@ -38,8 +38,14 @@ def update_item_data(
         data_json["status"].update(status_updates)
 
     # 4. Opdater state
-    if state_updates:
-        data_json["state"].update(state_updates)
+    if state_updates and "state" in state_updates:
+        now = datetime.now(ZoneInfo("Europe/Copenhagen"))
+        timestamp = now.strftime("%d-%m-%Y %H:%M:%S")
+
+        entry = f"{state_updates['state']} {timestamp}"
+
+        data_json["state"].append(entry)
+
 
     # 5. Log
     if log_entry:
