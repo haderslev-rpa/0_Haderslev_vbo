@@ -32,15 +32,23 @@ update_item_data(
 
     """
 
-    # ✅ Sikkerhed (det du vil opnå)
+    # ✅ Sikkerhed
     if update and item is None:
         raise ValueError("Du skal angive 'item' når update=True")
 
-    # 1. Struktur
-    data_json.setdefault("box", {})
-    data_json.setdefault("status", {})
-    data_json.setdefault("state", [])
-    data_json.setdefault("defer", None)
+    # 1. Struktur (inkl. type-sikring)
+    if not isinstance(data_json.get("box"), dict):
+        data_json["box"] = {}
+
+    if not isinstance(data_json.get("status"), dict):
+        data_json["status"] = {}
+
+    # ✅ VIGTIGT FIX
+    if not isinstance(data_json.get("state"), list):
+        data_json["state"] = []
+
+    if "defer" not in data_json:
+        data_json["defer"] = None
 
     # 2. Box
     if box_updates:
