@@ -1,4 +1,4 @@
-from __future__ import annotations  # import (fremtidig typing)
+from __future__ import annotations  # future import (typing)
 from dataclasses import dataclass  # dataclass (simpel data-klasse)
 from datetime import datetime  # datetime (dato og tid)
 from pathlib import Path  # Path (fil- og mappesti)
@@ -8,54 +8,53 @@ from typing import Optional  # Optional (kan være None)
 @dataclass  # decorator (ændrer klasse)
 class PlaywrightDebugHelper:  # klasse (skabelon for objekter)
     debug: bool = True  # bool (sand/falsk)
-    base_dir: Path = Path("debug_playwright")  # Path (sti til mappe)
+    base_dir: Path = Path("test_local_playwright")  # Path (debug-rodmappe)
     run_dir: Optional[Path] = None  # Optional (kan være None)
 
     def __post_init__(self):  # metode (kører efter init)
         if not self.debug:  # if (betingelse)
-            # Debug er slået fra: gør ingenting
-            return
+            return  # return (stop her)
 
-        # Debug er slået til: opret base + run mappe
+        # Opret hovedmappen hvis den ikke findes
         self.base_dir.mkdir(exist_ok=True)  # mkdir (opret mappe)
-        self.run_dir = self._next_run_dir()  # metodekald (find næste mappe)
+
+        # Find og opret næste debug_X mappe
+        self.run_dir = self._next_run_dir()  # metodekald (find mappe)
         self.run_dir.mkdir()  # mkdir (opret mappe)
 
     def _next_run_dir(self) -> Path:  # metode (intern hjælpefunktion)
-        # Find eksisterende Debug_X mapper
+        # Find eksisterende debug_X mapper
         existing = [
             p for p in self.base_dir.iterdir()
-            if p.is_dir() and p.name.startswith("Debug_")
+            if p.is_dir() and p.name.startswith("debug_")
         ]  # list (liste)
 
         numbers = []  # list (liste)
         for folder in existing:  # loop (gentag)
             try:
-                numbers.append(int(folder.name.replace("Debug_", "")))  # int (heltal)
+                number = int(folder.name.replace("debug_", ""))  # int (heltal)
+                numbers.append(number)
             except ValueError:  # exception (fejltype)
-                pass
+                pass  # pass (ignorer fejl)
 
         next_number = max(numbers, default=0) + 1  # max (største tal)
-        return self.base_dir / f"Debug_{next_number}"  # f-string (tekst med variabler)
+        return self.base_dir / f"debug_{next_number}"  # Path (ny mappe)
 
     def _ts(self) -> str:  # metode (timestamp)
         return datetime.now().strftime("%Y-%m-%d_%H-%M-%S")  # strftime (formatér tid)
 
     def screenshot(self, page, step_name: str, full_page: bool = True) -> Optional[Path]:
         """
-        Gem screenshot hvis debug=True.
-        page (Playwright side objekt)
-        step_name (navn til fil)
-        full_page (hele siden)
+        Gem screenshot hvis debug=True
         """
         if not self.debug:  # if (betingelse)
             return None
         if self.run_dir is None:  # if (betingelse)
             return None
 
-        safe_step = step_name.replace(" ", "_").replace("/", "_")  # str (tekst)
+        safe_step = step_name.replace(" ", "_").replace("/", "_")  # str (sikker tekst)
         file_name = f"{safe_step}_{self._ts()}.png"  # f-string (tekst med variabler)
         path = self.run_dir / file_name  # Path (filsti)
 
-        page.screenshot(path=str(path), full_page=full_page)  # screenshot (gem billede)
-        return path  # return (giv værdi tilbage)
+        page.screenshot(path=str(path), full_page=full_page)  # screenshot (Playwright)
+        return path  # return (sti)
