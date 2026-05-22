@@ -62,12 +62,20 @@ class PlaywrightDebugHelper:  # klasse (skabelon for objekter)
 
 
 
-
-def close_all_other_tabs(active_page: Page) -> None:
+def close_all_other_tabs(
+    active_page: Page,
+    print: bool = False
+) -> None:
     """
     Lukker alle faner i context undtagen den aktive page.
+
+    Hvis print=True, printes antal faner før og efter cleanup.
     """
     context = active_page.context
+
+    if print:
+        before = len(context.pages)
+        print(f"[Playwright] Antal faner FØR cleanup: {before}")
 
     for p in context.pages:
         if p != active_page:
@@ -75,3 +83,7 @@ def close_all_other_tabs(active_page: Page) -> None:
                 p.close()
             except Exception:
                 pass
+
+    if print:
+        after = len(context.pages)
+        print(f"[Playwright] Antal faner EFTER cleanup: {after}")
