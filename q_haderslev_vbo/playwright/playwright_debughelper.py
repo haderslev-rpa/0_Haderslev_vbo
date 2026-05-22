@@ -87,3 +87,4 @@ def close_all_other_tabs(
     if print:
         after = len(context.pages)
         print(f"[Playwright] Antal faner EFTER cleanup: {after}")
+        #nicolais commenter med
