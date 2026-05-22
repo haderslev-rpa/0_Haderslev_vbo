@@ -3,6 +3,7 @@ from dataclasses import dataclass  # dataclass (simpel data-klasse)
 from datetime import datetime  # datetime (dato og tid)
 from pathlib import Path  # Path (fil- og mappesti)
 from typing import Optional  # Optional (kan være None)
+from playwright.sync_api import Page
 
 
 @dataclass  # decorator (ændrer klasse)
@@ -58,3 +59,19 @@ class PlaywrightDebugHelper:  # klasse (skabelon for objekter)
 
         page.screenshot(path=str(path), full_page=full_page)  # screenshot (Playwright)
         return path  # return (sti)
+
+
+
+
+def close_all_other_tabs(active_page: Page) -> None:
+    """
+    Lukker alle faner i context undtagen den aktive page.
+    """
+    context = active_page.context
+
+    for p in context.pages:
+        if p != active_page:
+            try:
+                p.close()
+            except Exception:
+                pass
