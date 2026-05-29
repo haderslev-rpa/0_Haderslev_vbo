@@ -41,8 +41,8 @@ async def _login_robot(page: Page):
 
     # Valider login
     if await page.locator("#robotForm").count() > 0:
-        # ✅ FIX: screenshot er sync → IKKE await
-        dbg.screenshot(page, "FEJL_login")
+        # ✅ FIX: async screenshot → SKAL awaites
+        await dbg.screenshot(page, "FEJL_login")
         raise RuntimeError("❌ Login på FK IDP fejlede")
 
 
@@ -79,14 +79,14 @@ async def login_via_faelles_kommunal_idp(
     await page.goto(IDP_URL)
     await page.wait_for_load_state("domcontentloaded")
 
-    # ✅ FIX: screenshot er sync → IKKE await
-    dbg.screenshot(page, "IDP_før_login")
+    # ✅ FIX: async screenshot → SKAL awaites
+    await dbg.screenshot(page, "IDP_før_login")
 
     # Login flow
     await _login_robot(page)
 
-    # ✅ FIX: screenshot er sync → IKKE await
-    dbg.screenshot(page, "IDP_efter_login")
+    # ✅ FIX: async screenshot → SKAL awaites
+    await dbg.screenshot(page, "IDP_efter_login")
 
 """
 from automation_server_client import AutomationServer, Credential
