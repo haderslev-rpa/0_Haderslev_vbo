@@ -13,12 +13,13 @@ from playwright.async_api import Page, Browser, BrowserContext
 # ==================================================
 @dataclass
 class PlaywrightRunRecorder:
-    debug: bool = False                              # bool (til/fra)
-    base_dir: Path = Path("test_local_playwright")   # Path (rodmappe)
+    debug: bool = False                            # bool (til/fra)
+    base_dir: Path = Path("test_local_playwright") # Path (rodmappe)
 
-    run_dir: Optional[Path] = None                   # Path (run-mappe)
-    record_context: Optional[BrowserContext] = None  # BrowserContext (optagelse)
-    record_task: Optional[asyncio.Task] = None       # Task (baggrunds-timer)
+    run_dir: Optional[Path] = None                 # Path (run-mappe)
+    record_context: Optional[BrowserContext] = None# BrowserContext (optagelse)
+    record_task: Optional[asyncio.Task] = None     # Task (timer)
+    tracing_started: bool = False                  # bool (sikker stop)
 
     # --------------------------------------------------
     # Init (kører ved oprettelse)
@@ -53,7 +54,7 @@ class PlaywrightRunRecorder:
         return datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 
     # --------------------------------------------------
-    # Screenshot (bruges i drift OG debug)
+    # Screenshot (drift + debug)
     # --------------------------------------------------
     async def screenshot(
         self,
@@ -62,20 +63,20 @@ class PlaywrightRunRecorder:
         full_page: bool = True
     ) -> Path:
         """
-        Tager et enkelt screenshot (dokumentation)
+        Tager ét dokumentations-screenshot
         """
 
-        target_dir = self.run_dir or self.base_dir
-        target_dir.mkdir(exist_ok=True)
+        target = self.run_dir or self.base_dir
+        target.mkdir(exist_ok=True)
 
         safe = name.replace(" ", "_").replace("/", "_")
-        path = target_dir / f"{safe}_{self._ts()}.png"
+        path = target / f"{safe}_{self._ts()}.png"
 
         await page.screenshot(path=str(path), full_page=full_page)
         return path
 
     # --------------------------------------------------
-    # START OPTAGELSE (video + tracing)
+    # Start optagelse (video + tracing)
     # --------------------------------------------------
     async def start_recording(
         self,
@@ -83,26 +84,22 @@ class PlaywrightRunRecorder:
         timeout_seconds: int = 10
     ) -> BrowserContext:
         """
-        Starter en midlertidig optagelse (video + tracing)
+        Starter midlertidig optagelse
         """
 
-        target_dir = self.run_dir or self.base_dir
-        video_dir = target_dir / "video"
-        video_dir.mkdir(exist_ok=True)
+        target = self.run_dir or self.base_dir
 
-        # Opret separat context (browser-miljø)
         self.record_context = await browser.new_context(
-            record_video_dir=str(video_dir)
+            record_video_dir=str(target)
         )
 
-        # Start tracing (Playwright standard)
         await self.record_context.tracing.start(
             screenshots=True,
             snapshots=True,
             sources=True
         )
+        self.tracing_started = True
 
-        # Start automatisk stop-timer
         self.record_task = asyncio.create_task(
             self._auto_stop_after(timeout_seconds)
         )
@@ -110,48 +107,31 @@ class PlaywrightRunRecorder:
         return self.record_context
 
     # --------------------------------------------------
-    # STOP OPTAGELSE (manuel)
+    # Stop optagelse (manuel / exception / auto)
     # --------------------------------------------------
-    async def stop_recording(self, name: str = "recording"):
-        """
-        Stopper optagelse manuelt og gemmer video + trace
-        """
-
+    async def stop_recording(self, name: str):
         if not self.record_context:
             return
 
-        # Stop timer-task hvis den kører
         if self.record_task and not self.record_task.done():
             self.record_task.cancel()
 
-        # Stop tracing
-        trace_path = (self.run_dir or self.base_dir) / f"{name}_trace.zip"
-        await self.record_context.tracing.stop(path=str(trace_path))
+        if self.tracing_started:
+            trace_path = (self.run_dir or self.base_dir) / f"{name}_trace.zip"
+            await self.record_context.tracing.stop(path=str(trace_path))
+            self.tracing_started = False
 
-        # Luk context → video gemmes automatisk
         await self.record_context.close()
 
         self.record_context = None
         self.record_task = None
 
-    # --------------------------------------------------
-    # Automatisk stop efter timeout
-    # --------------------------------------------------
+    async def stop_recording_on_error(self, error: Exception):
+        await self.stop_recording("exception")
+
     async def _auto_stop_after(self, seconds: int):
-        """
-        Stopper optagelse automatisk efter X sekunder
-        """
         try:
             await asyncio.sleep(seconds)
-            await self.stop_recording(name="auto_timeout")
+            await self.stop_recording("auto_timeout")
         except asyncio.CancelledError:
             pass
-
-    # --------------------------------------------------
-    # Bruges i exception-handling
-    # --------------------------------------------------
-    async def stop_recording_on_error(self, error: Exception):
-        """
-        Stopper optagelse hvis der sker en fejl
-        """
-        await self.stop_recording(name="exception")
