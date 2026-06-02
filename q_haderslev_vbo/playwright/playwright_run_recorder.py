@@ -1,131 +1,100 @@
-from playwright.async_api import async_playwright, Page, Error
+from __future__ import annotations
+from dataclasses import dataclass
 from datetime import datetime
-import os
-import subprocess
+from pathlib import Path
+from typing import Optional
+import asyncio
+
+from playwright.async_api import Page, Browser, BrowserContext
 
 
-class BrowserSession:
-    """
-    BrowserSession (klasse – skabelon for objekt)
-    Ansvar:
-    - Starte Playwright
-    - Starte browser og context
-    - Finde run-navn og metadata
-    - Ingen mapper, ingen filer
-    """
+@dataclass
+class PlaywrightRunRecorder:
+    debug: bool = False
+    base_dir: Path = Path("test_local_playwright")
 
-    def __init__(self, headless: bool = True):
-        self.headless = headless
+    run_dir: Optional[Path] = None
+    record_context: Optional[BrowserContext] = None
+    record_task: Optional[asyncio.Task] = None
+    tracing_started: bool = False
 
-        # Playwright objekter
-        self.pw = None
-        self.browser = None
-        self.context = None
+    def __post_init__(self):
+        self.base_dir.mkdir(exist_ok=True)
+        if self.debug:
+            self.run_dir = self._next_run_dir()
+            self.run_dir.mkdir()
 
-        # Run-metadata (i hukommelsen)
-        self.github_repo_name: str | None = None
-        self.session_id: str | None = None
-        self.run_name: str | None = None
-        self.run_timestamp: str | None = None
+    def _next_run_dir(self) -> Path:
+        runs = [p for p in self.base_dir.iterdir() if p.is_dir() and p.name.startswith("run_")]
+        nums = []
+        for r in runs:
+            try:
+                nums.append(int(r.name.replace("run_", "")))
+            except ValueError:
+                pass
+        return self.base_dir / f"run_{max(nums, default=0)+1}"
 
-    # --------------------------------------------------
-    # Start browser-session
-    # --------------------------------------------------
-    async def start(self):
-        """
-        Starter Playwright og browser
-        Finder run-metadata
-        """
+    def _ts(self) -> str:
+        return datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 
-        # Start Playwright
-        self.pw = await async_playwright().start()
-        self.browser = await self.pw.chromium.launch(headless=self.headless)
-        self.context = await self.browser.new_context()
+    async def screenshot(self, page: Page, name: str) -> Path:
+        target = self.run_dir or self.base_dir
+        target.mkdir(exist_ok=True)
+        path = target / f"{name}_{self._ts()}.png"
+        await page.screenshot(path=str(path), full_page=True)
+        return path
 
-        # Find metadata
-        self.github_repo_name = self._find_github_repo_name()
-        self.session_id = self._find_session_id()
-        self.run_timestamp = self._generate_timestamp()
-        self.run_name = self._generate_run_name()
+    async def start_recording(self, browser: Browser, timeout_seconds: int = 10) -> BrowserContext:
+        target = self.run_dir or self.base_dir
 
-    # --------------------------------------------------
-    # Page-håndtering
-    # --------------------------------------------------
-    async def new_page(self) -> Page:
-        return await self.context.new_page()
+        self.record_context = await browser.new_context(
+            record_video_dir=str(target)
+        )
 
-    async def ensure_page_alive(self, page: Page | None) -> Page:
-        if page is None:
-            return await self.new_page()
+        # Tracing er sekundært
+        await self.record_context.tracing.start(
+            screenshots=True,
+            snapshots=True,
+            sources=True
+        )
+        self.tracing_started = True
 
+        self.record_task = asyncio.create_task(
+            self._auto_stop(timeout_seconds)
+        )
+
+        return self.record_context
+
+    async def stop_recording_clean(self, name: str):
+        """Bruges kun når alt gik godt"""
+        if not self.record_context:
+            return
+
+        if self.record_task and not self.record_task.done():
+            self.record_task.cancel()
+
+        if self.tracing_started:
+            try:
+                trace_path = (self.run_dir or self.base_dir) / f"{name}_trace.zip"
+                await self.record_context.tracing.stop(path=str(trace_path))
+            except Exception:
+                pass
+
+        await self.record_context.close()
+        self.record_context = None
+
+    async def stop_recording_on_error(self):
+        """Bruges ved exception – VIDEO er vigtigst"""
+        if not self.record_context:
+            return
+
+        # ❗ VIGTIGT: Ingen tracing.stop her
+        await self.record_context.close()
+        self.record_context = None
+
+    async def _auto_stop(self, seconds: int):
         try:
-            await page.title()
-            return page
-        except Error:
-            return await self.new_page()
-
-    # --------------------------------------------------
-    # Stop browser-session
-    # --------------------------------------------------
-    async def close(self):
-        if self.context:
-            await self.context.close()
-        if self.browser:
-            await self.browser.close()
-        if self.pw:
-            await self.pw.stop()
-
-    # ==================================================
-    # METADATA (INTERNE HJÆLPERE)
-    # ==================================================
-
-    def _generate_timestamp(self) -> str:
-        """
-        Dansk dato + tid (lokal tid)
-        Format: DD-MM-YYYY HH-MM
-        """
-        return datetime.now().strftime("%d-%m-%Y %H-%M")
-
-    def _generate_run_name(self) -> str:
-        """
-        Sammensætter run-navn
-        """
-        if self.session_id:
-            return f"{self.run_timestamp} (session {self.session_id})"
-        return self.run_timestamp
-
-    def _find_session_id(self) -> str | None:
-        """
-        Finder session-id fra Automation Server (env)
-        """
-        return os.getenv("AUTOMATION_SESSION_ID")
-
-    def _find_github_repo_name(self) -> str:
-        """
-        Finder GitHub repo-navn
-        Prioritet:
-        1) ENV: GITHUB_REPO_NAME
-        2) git config
-        3) fallback
-        """
-
-        # 1. Environment variable
-        env_name = os.getenv("GITHUB_REPO_NAME")
-        if env_name:
-            return env_name
-
-        # 2. Git config
-        try:
-            result = subprocess.check_output(
-                ["git", "config", "--get", "remote.origin.url"],
-                stderr=subprocess.DEVNULL
-            ).decode().strip()
-
-            # Udtræk repo-navn
-            repo = result.split("/")[-1].replace(".git", "")
-            return repo
-        except Exception:
+            await asyncio.sleep(seconds)
+            await self.stop_recording_clean("auto_timeout")
+        except asyncio.CancelledError:
             pass
-
-        # 3. Fallback
-        return "local-debug"
