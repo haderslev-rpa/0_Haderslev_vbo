@@ -3,96 +3,55 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
-import asyncio  # async styring (vent / tasks)
+import asyncio
 
 from playwright.async_api import Page, Browser, BrowserContext
 
 
-# ==================================================
-# PLAYWRIGHT RUN RECORDER
-# ==================================================
 @dataclass
 class PlaywrightRunRecorder:
-    debug: bool = False                            # bool (til/fra)
-    base_dir: Path = Path("test_local_playwright") # Path (rodmappe)
+    debug: bool = False
+    base_dir: Path = Path("test_local_playwright")
 
-    run_dir: Optional[Path] = None                 # Path (run-mappe)
-    record_context: Optional[BrowserContext] = None# BrowserContext (optagelse)
-    record_task: Optional[asyncio.Task] = None     # Task (timer)
-    tracing_started: bool = False                  # bool (sikker stop)
+    run_dir: Optional[Path] = None
+    record_context: Optional[BrowserContext] = None
+    record_task: Optional[asyncio.Task] = None
+    tracing_started: bool = False
 
-    # --------------------------------------------------
-    # Init (kører ved oprettelse)
-    # --------------------------------------------------
     def __post_init__(self):
         self.base_dir.mkdir(exist_ok=True)
-
         if self.debug:
             self.run_dir = self._next_run_dir()
             self.run_dir.mkdir()
 
-    # --------------------------------------------------
-    # Interne hjælpefunktioner
-    # --------------------------------------------------
     def _next_run_dir(self) -> Path:
-        existing = [
-            p for p in self.base_dir.iterdir()
-            if p.is_dir() and p.name.startswith("run_")
-        ]
-
-        numbers = []
-        for folder in existing:
+        runs = [p for p in self.base_dir.iterdir() if p.is_dir() and p.name.startswith("run_")]
+        nums = []
+        for r in runs:
             try:
-                numbers.append(int(folder.name.replace("run_", "")))
+                nums.append(int(r.name.replace("run_", "")))
             except ValueError:
                 pass
-
-        next_number = max(numbers, default=0) + 1
-        return self.base_dir / f"run_{next_number}"
+        return self.base_dir / f"run_{max(nums, default=0)+1}"
 
     def _ts(self) -> str:
         return datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 
-    # --------------------------------------------------
-    # Screenshot (drift + debug)
-    # --------------------------------------------------
-    async def screenshot(
-        self,
-        page: Page,
-        name: str,
-        full_page: bool = True
-    ) -> Path:
-        """
-        Tager ét dokumentations-screenshot
-        """
-
+    async def screenshot(self, page: Page, name: str) -> Path:
         target = self.run_dir or self.base_dir
         target.mkdir(exist_ok=True)
-
-        safe = name.replace(" ", "_").replace("/", "_")
-        path = target / f"{safe}_{self._ts()}.png"
-
-        await page.screenshot(path=str(path), full_page=full_page)
+        path = target / f"{name}_{self._ts()}.png"
+        await page.screenshot(path=str(path), full_page=True)
         return path
 
-    # --------------------------------------------------
-    # Start optagelse (video + tracing)
-    # --------------------------------------------------
-    async def start_recording(
-        self,
-        browser: Browser,
-        timeout_seconds: int = 10
-    ) -> BrowserContext:
-        """
-        Starter midlertidig optagelse
-        """
-
+    async def start_recording(self, browser: Browser, timeout_seconds: int = 10) -> BrowserContext:
         target = self.run_dir or self.base_dir
 
         self.record_context = await browser.new_context(
             record_video_dir=str(target)
         )
 
+        # Tracing er sekundært
         await self.record_context.tracing.start(
             screenshots=True,
             snapshots=True,
@@ -101,15 +60,13 @@ class PlaywrightRunRecorder:
         self.tracing_started = True
 
         self.record_task = asyncio.create_task(
-            self._auto_stop_after(timeout_seconds)
+            self._auto_stop(timeout_seconds)
         )
 
         return self.record_context
 
-    # --------------------------------------------------
-    # Stop optagelse (manuel / exception / auto)
-    # --------------------------------------------------
-    async def stop_recording(self, name: str):
+    async def stop_recording_clean(self, name: str):
+        """Bruges kun når alt gik godt"""
         if not self.record_context:
             return
 
@@ -117,21 +74,27 @@ class PlaywrightRunRecorder:
             self.record_task.cancel()
 
         if self.tracing_started:
-            trace_path = (self.run_dir or self.base_dir) / f"{name}_trace.zip"
-            await self.record_context.tracing.stop(path=str(trace_path))
-            self.tracing_started = False
+            try:
+                trace_path = (self.run_dir or self.base_dir) / f"{name}_trace.zip"
+                await self.record_context.tracing.stop(path=str(trace_path))
+            except Exception:
+                pass
 
         await self.record_context.close()
-
         self.record_context = None
-        self.record_task = None
 
-    async def stop_recording_on_error(self, error: Exception):
-        await self.stop_recording("exception")
+    async def stop_recording_on_error(self):
+        """Bruges ved exception – VIDEO er vigtigst"""
+        if not self.record_context:
+            return
 
-    async def _auto_stop_after(self, seconds: int):
+        # ❗ VIGTIGT: Ingen tracing.stop her
+        await self.record_context.close()
+        self.record_context = None
+
+    async def _auto_stop(self, seconds: int):
         try:
             await asyncio.sleep(seconds)
-            await self.stop_recording("auto_timeout")
+            await self.stop_recording_clean("auto_timeout")
         except asyncio.CancelledError:
             pass
